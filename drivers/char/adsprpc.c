@@ -39,6 +39,7 @@
 #include <linux/dma-contiguous.h>
 #include <linux/cma.h>
 #include <linux/iommu.h>
+#include <linux/dma-iommu.h>
 #include <linux/sort.h>
 #include <linux/cred.h>
 #include <linux/msm_dma_iommu_mapping.h>
@@ -116,9 +117,6 @@
 
 #define GET_TABLE_IDX_FROM_CTXID(ctxid) \
 	((ctxid & FASTRPC_CTX_TABLE_IDX_MASK) >> FASTRPC_CTX_TABLE_IDX_POS)
-
-#define VALID_FASTRPC_CID(cid) \
-	(cid >= ADSP_DOMAIN_ID && cid < NUM_CHANNELS)
 
 /* Reserve few entries in context table for critical kernel and static RPC
  * calls to avoid user invocations from exhausting all entries.
@@ -1452,8 +1450,8 @@ static int fastrpc_mmap_create(struct fastrpc_file *fl, int fd,
 				dma_buf_attach(map->buf, me->dev)));
 		if (err) {
 			ADSPRPC_ERR(
-				"dma_buf_attach for fd %d failed to map buffer on SMMU device %s ret %ld\n",
-				fd, dev_name(me->dev), PTR_ERR(map->attach));
+				"dma_buf_attach for fd %d for len 0x%zx failed to map buffer on SMMU device %s ret %ld\n",
+				fd, len, dev_name(me->dev), PTR_ERR(map->attach));
 			err = -EFAULT;
 			goto bail;
 		}
@@ -1464,8 +1462,8 @@ static int fastrpc_mmap_create(struct fastrpc_file *fl, int fd,
 				DMA_BIDIRECTIONAL)));
 		if (err) {
 			ADSPRPC_ERR(
-				"dma_buf_map_attachment for fd %d failed on device %s ret %ld\n",
-				fd, dev_name(me->dev), PTR_ERR(map->table));
+				"dma_buf_map_attachment for fd %d for len 0x%zx failed on device %s ret %ld\n",
+				fd, len, dev_name(me->dev), PTR_ERR(map->table));
 			err = -EFAULT;
 			goto bail;
 		}
@@ -1536,8 +1534,8 @@ static int fastrpc_mmap_create(struct fastrpc_file *fl, int fd,
 				dma_buf_attach(map->buf, sess->smmu.dev)));
 		if (err) {
 			ADSPRPC_ERR(
-				"dma_buf_attach for fd %d failed to map buffer on SMMU device %s ret %ld\n",
-				fd, dev_name(sess->smmu.dev),
+				"dma_buf_attach for fd %d failed for len 0x%zx to map buffer on SMMU device %s ret %ld\n",
+				fd, len, dev_name(sess->smmu.dev),
 				PTR_ERR(map->attach));
 			err = -EFAULT;
 			goto bail;
@@ -1559,8 +1557,8 @@ static int fastrpc_mmap_create(struct fastrpc_file *fl, int fd,
 				DMA_BIDIRECTIONAL)));
 		if (err) {
 			ADSPRPC_ERR(
-				"dma_buf_map_attachment for fd %d failed on device %s ret %ld\n",
-				fd, dev_name(sess->smmu.dev),
+				"dma_buf_map_attachment for fd %d failed for len 0x%zx on device %s ret %ld\n",
+				fd, len, dev_name(sess->smmu.dev),
 				PTR_ERR(map->table));
 			err = -EFAULT;
 			goto bail;
@@ -2063,11 +2061,7 @@ static int context_alloc(struct fastrpc_file *fl, uint32_t kernel,
 		if (err)
 			goto bail;
 	}
-	VERIFY(err, VALID_FASTRPC_CID(cid));
-	if (err) {
-		err = -ECHRNG;
-		goto bail;
-	}
+
 	chan = &me->channel[cid];
 
 	spin_lock_irqsave(&chan->ctxlock, irq_flags);
@@ -2477,7 +2471,7 @@ static int get_args(uint32_t kernel, struct smq_invoke_ctx *ctx)
 					&ctx->maps[i]);
 		if (err) {
 			for (j = bufs; j < i; j++)
-				fastrpc_mmap_free(ctx->maps[j], 0);
+			fastrpc_mmap_free(ctx->maps[j], 0);
 			mutex_unlock(&ctx->fl->map_mutex);
 			goto bail;
 		}
@@ -3605,12 +3599,6 @@ static int fastrpc_init_attach_process(struct fastrpc_file *fl,
 	remote_arg_t ra[1];
 	struct fastrpc_ioctl_invoke_async ioctl;
 
-	if (fl->dev_minor == MINOR_NUM_DEV) {
-		err = -ECONNREFUSED;
-		ADSPRPC_ERR(
-			"untrusted app trying to attach to privileged DSP PD\n");
-		return err;
-	}
 	/*
 	 * Prepare remote arguments for creating thread group
 	 * in guestOS/staticPD on the remote subsystem.
@@ -3884,13 +3872,6 @@ static int fastrpc_init_create_static_process(struct fastrpc_file *fl,
 		unsigned int namelen;
 		unsigned int pageslen;
 	} inbuf;
-
-	if (fl->dev_minor == MINOR_NUM_DEV) {
-		err = -ECONNREFUSED;
-		ADSPRPC_ERR(
-			"untrusted app trying to attach to audio PD\n");
-		return err;
-	}
 
 	if (!init->filelen)
 		goto bail;
@@ -6472,6 +6453,8 @@ static int fastrpc_cb_probe(struct device *dev)
 					__func__, dev_name(dev), err);
 		goto bail;
 	}
+	/* Enabling best fit to see if memory alloc failures occur*/
+	iommu_dma_enable_best_fit_algo(dev);
 	sess = &chan->session[chan->sesscount];
 	sess->used = 0;
 #if IS_ENABLED(CONFIG_ADSPRPC_QGKI)
