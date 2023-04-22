@@ -366,8 +366,7 @@ static int host_error_hdlr(struct npu_device *npu_dev, bool force)
 		network = &host_ctx->networks[i];
 		if (network->is_valid && network->cmd_pending &&
 			network->fw_error) {
-			network->cmd_pending = false;
-			pr_debug("complete network %llx\n",
+		pr_debug("complete network %llx\n",
 				network->id);
 			complete(&network->cmd_done);
 		}
@@ -689,7 +688,6 @@ static void free_network(struct npu_host_ctx *ctx, struct npu_client *client,
  * Function Definitions - IPC
  * -------------------------------------------------------------------------
  */
-
 static void app_msg_proc(struct npu_host_ctx *host_ctx, uint32_t *msg)
 {
 	uint32_t msg_id;
@@ -778,6 +776,7 @@ static void app_msg_proc(struct npu_host_ctx *host_ctx, uint32_t *msg)
 		network->stats_buf_size = stats_size;
 		network->cmd_pending = false;
 		network->cmd_ret_status = exe_rsp_pkt->header.status;
+
 		complete(&network->cmd_done);
 		network_put(network);
 		break;

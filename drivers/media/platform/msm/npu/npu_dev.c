@@ -109,6 +109,7 @@ static int npu_get_property(struct npu_client *client,
 	unsigned long arg);
 static long npu_ioctl(struct file *file, unsigned int cmd,
 					unsigned long arg);
+static unsigned int npu_poll(struct file *filp, struct poll_table_struct *p);
 static int npu_parse_dt_clock(struct npu_device *npu_dev);
 static int npu_parse_dt_regulator(struct npu_device *npu_dev);
 static int npu_of_parse_pwrlevels(struct npu_device *npu_dev,
@@ -1223,6 +1224,7 @@ static int npu_close(struct inode *inode, struct file *file)
 	struct npu_client *client = file->private_data;
 
 	npu_host_cleanup_networks(client);
+
 	mutex_destroy(&client->list_lock);
 	kfree(client);
 	return 0;
@@ -1706,6 +1708,23 @@ static long npu_ioctl(struct file *file, unsigned int cmd,
 	}
 
 	return ret;
+}
+
+static unsigned int npu_poll(struct file *filp, struct poll_table_struct *p)
+{
+	struct npu_client *client = filp->private_data;
+	int rc = 0;
+
+	poll_wait(filp, &client->wait, p);
+
+	mutex_lock(&client->list_lock);
+	if (!list_empty(&client->evt_list)) {
+		pr_debug("poll cmd done\n");
+		rc = POLLIN | POLLRDNORM;
+	}
+	mutex_unlock(&client->list_lock);
+
+	return rc;
 }
 
 /* -------------------------------------------------------------------------
